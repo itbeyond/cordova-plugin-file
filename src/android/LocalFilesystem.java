@@ -40,6 +40,8 @@ import android.content.Context;
 import android.content.Intent;
 
 import java.nio.charset.Charset;
+import java.io.FileOutputStream;
+import java.io.FileInputStream;
 
 public class LocalFilesystem extends Filesystem {
     private final Context context;
@@ -260,23 +262,29 @@ public class LocalFilesystem extends Filesystem {
 	}
 
     private void copyFile(Filesystem srcFs, LocalFilesystemURL srcURL, File destFile, boolean move) throws IOException, InvalidModificationException, NoModificationAllowedException {
-        if (move) {
-            String realSrcPath = srcFs.filesystemPathForURL(srcURL);
-            if (realSrcPath != null) {
-                File srcFile = new File(realSrcPath);
-                if (srcFile.renameTo(destFile)) {
-                    return;
-                }
-                // Trying to rename the file failed.  Possibly because we moved across file system on the device.
-            }
-        }
-
-        CordovaResourceApi.OpenForReadResult offr = resourceApi.openForRead(srcFs.toNativeUri(srcURL));
-        copyResource(offr, new FileOutputStream(destFile));
-
-        if (move) {
-            srcFs.removeFileAtLocalURL(srcURL);
-        }
+		String realSrcPath = srcFs.filesystemPathForURL(srcURL);
+		if (realSrcPath != null) {
+			File srcFile = new File(realSrcPath);
+			FileChannel outputChannel = null;
+			FileChannel inputChannel = null;
+			try {
+				outputChannel = new FileOutputStream(destFile).getChannel();
+				inputChannel = new FileInputStream(srcFile).getChannel();
+				// Transfer file in 256MB blocks
+				final long blockSize = Math.min(268435456, inputChannel.size());
+				long position = 0;
+				while (outputChannel.transferFrom(inputChannel, position, blockSize) > 0) {
+					position += blockSize;
+				}
+				inputChannel.close();
+				if (move) {
+					srcFile.delete();
+				}
+			} finally {
+				if (inputChannel != null) inputChannel.close();
+				if (outputChannel != null) outputChannel.close();
+			}
+		}
     }
 
     private void copyDirectory(Filesystem srcFs, LocalFilesystemURL srcURL, File dstDir, boolean move) throws IOException, NoModificationAllowedException, InvalidModificationException, FileExistsException {
